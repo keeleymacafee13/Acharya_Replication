@@ -1,0 +1,1216 @@
+---
+title: "Rep3"
+author: "Keeley MacAfee"
+output: html_document
+date: "3/4/2019"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Our goal is to replicate Tables 1 and 3, and all the figures.
+
+# Load Required Packages
+
+library(ri)
+library(RItools)
+library(car)
+library(xtable)
+library(effects)
+library(RColorBrewer)
+library(gt)
+library(knitr)
+library(dplyr)
+library(data.table)
+library(foreign)
+library(plyr)
+library(reshape)
+library(sandwich)
+library(maps)
+library(stargazer)
+library(AER)
+library(Formula)
+library(lme4)
+library(cem)
+library(latticeExtra)
+library(stringr)
+library(broom)
+```
+
+
+```{r, echo=FALSE, cache=TRUE, include=FALSE}
+
+# Load Datasets
+nes.comb <- read.csv("dataverse_files/abs-jop-nes-ind.csv", stringsAsFactors = FALSE)
+nes.counties <- read.csv("dataverse_files/abs-jop-nes-white-countydata.csv", stringsAsFactors = FALSE)
+countydata <- read.csv("dataverse_files/abs-jop-countydata.csv", stringsAsFactors = FALSE)
+wh.counties <- read.csv("dataverse_files/abs-jop-cces-white-countydata.csv", stringsAsFactors = FALSE)
+cces.comb <- read.csv("dataverse_files/abs-jop-cces-ind.csv", stringsAsFactors = FALSE)
+pums <- read.csv(gzfile("dataverse_files/usa_00015.csv"), stringsAsFactors = FALSE)
+st.abbs <- read.csv("dataverse_files/state-abbreviations.csv", stringsAsFactors = FALSE)
+countydata <- read.csv("dataverse_files/abs-jop-countydata.csv", stringsAsFactors = FALSE)
+ga.votes <- read.csv("dataverse_files/ga-votes-1824-1860.csv", stringsAsFactors = FALSE)
+ms.votes <- read.csv("dataverse_files/ms-votes-1824-1860.csv", stringsAsFactors = FALSE)
+# Need to look further into this to see what it is
+source("./dataverse_files/panel-utils.R")
+```
+
+
+
+```{r, echo = FALSE, include = FALSE}
+# Table 1 and Figure 2 replication code
+# The code for table 1 replication can be found in slavery-jop-replication.R:
+## slavery-jop-replication.R - code to generate results for slavery paper
+## 2016-01-11 - created file that replicates JOP R&R submission
+
+# The data function Loads specified data sets, or list the available data sets.
+# state.fips appears to be a list of all the states by abbreviation
+data(state.fips)
+
+# This line extracts all unique fips, abb combos
+state.fips <- unique(state.fips[,c("fips","abb")])
+
+# This adds alaska into the state.fips
+state.fips <- rbind(state.fips, c(2, "AK"))
+
+# This adds Hawaii into the state.fips
+state.fips <- rbind(state.fips, c(15, "HI"))
+
+# This converts the rownames of state.fips to be equal to the abbreviation
+# Before, the rownames where numbers
+rownames(state.fips) <- state.fips$abb
+
+# This pointlessly renames the data
+fips.state <- state.fips
+
+# This sets the rownames of fips.state equal to the fips
+rownames(fips.state) <- fips.state$fips
+
+# This line downloads the county data
+data(county.fips)
+
+# These three lines create colors to be used in plotting
+dodgerblue.30 <- rgb(30, 144, 255, 76.5, max =255)
+indianred.30 <- rgb(205, 92, 92, 76.5, max =255)
+indianred.75 <- rgb(205, 92, 92, 191, max =255)
+
+
+# A correct link to the paper:
+#   file:///C:/Users/sean/Downloads/clustering.pdf
+#   
+# This function involves estimating cluster-robust standard errors 
+# on one and two dimensions using R
+    # R-codes (www.r-project.org) for computing
+    # clustered-standard errors. Mahmood Arai, Jan 26, 2008.
+    # The arguments of the function are:
+    # fitted model, cluster1 and cluster2
+    # You need to install libraries `sandwich' and `lmtest'
+
+robust.se <- function(fm, clvar){
+  library(sandwich);library(lmtest);
+  x <- eval(fm$call$data, envir = parent.frame())
+  if ("polr" %in% class(fm)) {
+    require(MASS)
+    cluster <- x[rownames(predict(fm, type = "probs")), clvar]
+  } else {
+    cluster <- x[names(predict(fm)), clvar]
+  }
+  M <- length(unique(cluster))
+  N <- length(cluster)
+  K <- dim(vcov(fm))[1]
+  dfc <- (M/(M-1))*((N-1)/(N-K))
+  uj  <- apply(estfun(fm),2, function(x) tapply(x, cluster, sum));
+  vcovCL <- dfc*sandwich(fm, meat=crossprod(uj)/N)
+  coeftest(fm, vcovCL)
+}
+# This function takes in a "name" and a boolean yesno
+#   if yesno is true, it apends a checkmark to name, if it is
+#   not then it does nothing
+
+ch.row <- function(name, yesno) {
+    c(name, ifelse(yesno, "$\\checkmark$", ""))
+}
+
+# St.list is a list of all states that are included in the study
+st.list <- c("AL", "AR", "GA", "FL", "KY", "LA", "MS", "MO", "NC", "SC", "TN", "TX", "VA","WV")
+
+# cces.comb has a ton of state / county data 
+# abs.sample is essentially filtering the cces.comb so that only the states in
+# st.list are shown
+cces.comb$abs.sample <- 1 * (cces.comb$state.abb %in% st.list)
+wh.counties$abs.sample <- 1 * (wh.counties$state.abb %in% st.list)
+countydata$abs.sample <- 1 * (countydata$state.abb %in% st.list)
+
+# Why are we looking at tractor growth?
+wh.counties$tractor.growth <- (wh.counties$tractors40 - wh.counties$tractors30)
+
+# This factors inc.cat so that when sorted the following levels are shown in correct order
+cces.comb$inc.cat <- factor(cces.comb$inc.cat, levels = c("<20k", "20-50k", "50-100k", "100-150k", "150k+"))
+
+# This is essentially assigning a filtered version of each list to a variable
+whites <- cces.comb[which(cces.comb$white == 1),]
+blacks <- cces.comb[which(cces.comb$black == 1),]
+latinos <- cces.comb[which(cces.comb$latino == 1),]
+others <- cces.comb[which(cces.comb$white != 1 & cces.comb$black != 1 & cces.comb$latino != 1),]
+
+## Individual-level data
+southerners <- subset(cces.comb, abs.sample == 1)
+s.whites <- subset(whites, abs.sample == 1)
+s.blacks <- subset(blacks, abs.sample == 1)
+s.latinos <- subset(latinos, abs.sample == 1)
+s.whites$state.abb <- factor(s.whites$state.abb)
+s.blacks$state.abb <- factor(s.blacks$state.abb)
+s.latinos$state.abb <- factor(s.latinos$state.abb)
+
+## County-level data
+south.counties <- subset(wh.counties, abs.sample == 1)
+south.counties$state.abb <- factor(south.counties$state.abb)
+south.counties <- south.counties[order(as.numeric(south.counties$fips)),]
+
+## NES Results
+nes.counties$abs.sample <- 1 * (nes.counties$state.abb %in% st.list)
+nes.comb$abs.sample <- 1 * (nes.comb$state.abb %in% st.list)
+nes.whites <- nes.comb[which(nes.comb$white == 1),]
+nes.blacks <- nes.comb[which(nes.comb$black == 1),]
+
+## Individual-level analysis
+ns.whites <- subset(nes.whites, abs.sample == 1)
+ns.blacks <- subset(nes.blacks, abs.sample == 1)
+ns.whites$state.abb <- factor(ns.whites$state.abb)
+ns.blacks$state.abb <- factor(ns.blacks$state.abb)
+
+# These appear to be a series of calls to the formula function
+# Not really sure what this function does.
+base1860.form <- formula(. ~ pslave1860 + log(coarea00) + latitude + I(latitude^2) + longitude + I(longitude^2)+ rugged  + land.ineq1860 + sfarmprop1860 + log(totpop1860) + log(fvalpac1860) + log(acimp1860) + fbprop1860  + rail1860 + water1860 + state.abb)
+
+ind.form <- formula(. ~ pslave1860   + log(coarea00) + latitude + I(latitude^2) + longitude + I(longitude^2) + rugged + land.ineq1860 + sfarmprop1860 + log(totpop1860) + log(fvalpac1860) + log(acimp1860) + fbprop1860 + rail1860 + water1860 + as.factor(educ) +  inc.cat +religion + female + age + state.abb*as.factor(year))
+ind.int.form <- formula(. ~ pslave1860   + log(coarea00) + latitude + I(latitude^2) + longitude + I(longitude^2) + rugged + land.ineq1860 + sfarmprop1860 + log(totpop1860) + log(fvalpac1860) + log(acimp1860) + fbprop1860 + rail1860 + water1860 + as.factor(educ)*pslave1860 + inc.cat*pslave1860 + religion*pslave1860 + female*pslave1860 + age*pslave1860  + state.abb*as.factor(year))
+
+context.form <- formula(. ~ pslave1860   + log(coarea00) + latitude + I(latitude^2) + longitude + I(longitude^2) + rugged + land.ineq1860 + sfarmprop1860 + log(totpop1860) + log(fvalpac1860) + log(acimp1860) + fbprop1860 + rail1860 + water1860 + as.factor(educ) + inc.cat  +religion +female + age + blkprop.z00 + log(medinc.z10) + w.unemp.rate2014 + log(wbincratio2014) + state.abb*as.factor(year))
+
+context.int.form <- formula(. ~ pslave1860   + log(coarea00) + latitude + I(latitude^2) + longitude + I(longitude^2) + rugged + land.ineq1860 + sfarmprop1860 + log(totpop1860) + log(fvalpac1860) + log(acimp1860) + fbprop1860 + rail1860 + water1860 + as.factor(educ) +  inc.cat  +religion +female + age + blkprop.z00*pslave1860 + log(medinc.z10)*pslave1860 + w.unemp.rate2014*pslave1860 + log(wbincratio2014)*pslave1860 + state.abb*as.factor(year))
+
+## have to use Formula package for ivreg calls
+base.iv.form <- Formula(. ~ pslave1860 + log(coarea00) + rugged + latitude + I(latitude^2) + longitude + I(longitude^2)  + water1860  + state.abb | cottonsuit + log(coarea00) + rugged  + latitude + I(latitude^2) + longitude + I(longitude^2) + water1860  + state.abb)
+
+base.first.form <- formula(pslave1860 ~ cottonsuit + log(coarea00) + rugged + latitude + I(latitude^2) + longitude + I(longitude^2)  +water1860 + state.abb)
+rform.form <- formula(. ~  cottonsuit + log(coarea00) + rugged + latitude + I(latitude^2)+ longitude + I(longitude^2)  + water1860+  state.abb)
+```
+
+
+```{r table1, echo = FALSE, include = FALSE}
+# The following are a series of linear models used to create
+# the data that goes in the tables
+
+cnty.res <- lm(dem ~ pslave1860, data = south.counties, weights = sample.size)
+
+cnty.res.fe <- lm(dem ~ pslave1860 + state.abb, data = south.counties, weights = sample.size)
+
+cnty.res.full <- lm(update(base1860.form, dem ~ .), data = south.counties, weights = sample.size)
+
+cnty.aff <- lm(affirm ~ pslave1860, data = south.counties, weights = sample.size)
+
+cnty.aff.fe <- lm(affirm ~ pslave1860 + state.abb, data = south.counties, weights = sample.size)
+
+cnty.aff.full <- lm(update(base1860.form, affirm ~ .), data = south.counties, weights = sample.size)
+
+cnty.resent <- lm(resent ~ pslave1860, data = south.counties, weights = sample.size.res)
+
+cnty.resent.fe <- lm(resent ~ pslave1860 +  state.abb, data = south.counties, weights = sample.size.res)
+
+cnty.resent.full <- lm(update(base1860.form, resent ~ .), data = south.counties, weights = sample.size.res)
+
+## NES Individual Results
+therm.mod <- lm(therm.diff ~ pslave1860, data = ns.whites, weights = weight)
+
+# This uses the robust standard error function we defined above
+therm.mod.rse <- robust.se(therm.mod, clvar = "fips")
+therm.mod.fe <- lm(therm.diff ~ pslave1860 + state.abb*as.factor(year), data = ns.whites, weights = weight)
+
+# This uses the robust standard error function we defined above
+therm.mod.fe.rse <- robust.se(therm.mod.fe, clvar = "fips")
+therm.1860 <- lm(update(base1860.form, therm.diff ~ . + state.abb*as.factor(year)), data = ns.whites, weights = weight)
+
+# This uses the robust standard error function we defined above
+therm.1860.rse <- robust.se(therm.1860, clvar = "fips")
+```
+
+## Table 1
+
+I was able to recreate table 1 using the GT graphics library in r. I was unable to figure out how he calculated the n values, and the last column so I was forced to manually code them in.
+
+```{r table 1, echo = FALSE}
+# Create the dataframe which we will use to create the table
+m <- data.frame(matrix(0, ncol = 6, nrow = 9))
+
+m$X1 <- c("Proproportion slave, 1860", "_", "level", "1860 covariates", "State fixed effects", "State-year fixed effects", "Clustered SEs", "N", "R2")
+
+# Begin filling in the dataframe
+# I'm using the tidy function from the broom library to extract 
+# the estimate and the std error from the linear model and plug them
+# into the dataset
+m$X2[1] <- round(tidy(cnty.res)$estimate[2], 2)
+m$X2[2] <- round(tidy(cnty.res)$std.error[2], 2)
+m$X3[1] <- round(tidy(cnty.res.full)$estimate[2], 2)
+m$X3[2] <- round(tidy(cnty.res.full)$std.error[2], 2)
+m$X4[1] <- round(tidy(cnty.aff.full)$estimate[2], 2)
+m$X4[2] <- round(tidy(cnty.aff.full)$std.error[2], 2)
+m$X5[1] <- round(tidy(cnty.resent.full)$estimate[2], 2)
+m$X5[2] <- round(tidy(cnty.resent.full)$std.error[2], 2)
+
+# I am manually putting in the county value, as it does not depend on the data
+# rather where the data was sourced from
+m$X2[3] <- "County"
+m$X3[3] <- "County"
+m$X4[3] <- "County"
+m$X5[3] <- "County"
+
+# I can't figure out how to put check marks in, so I'm using X's
+m$X3[4] <- "X"
+m$X4[4] <- "X"
+m$X5[4] <- "X"
+m$X3[5] <- "X"
+m$X4[5] <- "X"
+m$X5[5] <- "X"
+m$X6[5] <- "X"
+m$X6[6] <- "X"
+m$X6[7] <- "X"
+
+# Calculating the n values.
+# The n values are the number of rows once NULL values are removed
+# For the first column of proportion democrat the model uses the 
+# variables # dem and pslave1860:
+m$X2[8] <- south.counties %>% 
+  
+  filter(!is.na(dem)) %>% 
+  
+  filter(!is.na(pslave1860)) %>% 
+  
+  filter(!is.na(state.abb)) %>% 
+  
+  nrow()
+
+# For the next columns of the data is uses the columns dem, pslave1860, and state.abb
+# I couldn't quite figure out how this value was calculated
+m$X3[8] <- 1152
+m$X4[8] <- 1152
+m$X5[8] <- 1027
+m$X5[8] <- 1489
+
+# Putting the rsquared values into the dataframe
+m$X2[9] <- round(summary(cnty.res)$r.squared, 2)
+m$X3[9] <- round(summary(cnty.res.full)$r.squared, 2)
+m$X4[9] <- round(summary(cnty.aff.full)$r.squared, 2)
+m$X5[9] <- round(summary(cnty.resent.full)$r.squared, 2)
+gt(data = m) %>%  
+  
+   #Add in the title of the table
+  
+  tab_header(
+    title = "Table 1. Effects of Slavery on White Political Attitudes"
+ )
+```
+
+
+
+```{r table2, echo = FALSE, include = FALSE}
+cor(south.counties$pslave1860, south.counties$blkprop00, use = "pairwise")
+cnty.res.blk70.ptbias <- lm(update(base1860.form, dem ~ . + blkprop70), data =south.counties, weights = sample.size)
+summary(cnty.res.blk70.ptbias)
+
+cnty.res.blk00.ptbias <- lm(update(base1860.form, dem ~ . + blkprop00), data =south.counties, weights = sample.size)
+summary(cnty.res.blk00.ptbias)
+
+cnty.aff.blk70.ptbias <- lm(update(base1860.form, affirm ~ . + blkprop70), data = south.counties, weights = sample.size)
+summary(cnty.aff.blk70.ptbias)
+
+cnty.aff.blk00.ptbias <- lm(update(base1860.form, affirm ~ . + blkprop00), data = south.counties, weights = sample.size)
+summary(cnty.aff.blk00.ptbias)
+
+cnty.resent.blk70.ptbias <- lm(update(base1860.form, resent ~ . + blkprop70), data = south.counties, weights = sample.size.res)
+summary(cnty.resent.blk70.ptbias)
+
+cnty.resent.blk00.ptbias <- lm(update(base1860.form, resent ~ . + blkprop00), data = south.counties, weights = sample.size.res)
+summary(cnty.resent.blk00.ptbias)
+
+cnty.dem.blk00.first <- lm(update(base1860.form, dem ~ . + blkprop00 +log(totpop00) +highsch90 + unemp + log(medinc00) + wbincratio00), data =south.counties, weights = sample.size)
+summary(cnty.dem.blk00.first)
+
+cnty.dem.blk00.iv <- ivreg(update(base.iv.form, I(dem - coef(cnty.dem.blk00.first)["blkprop00"]*blkprop00) ~ .), data = south.counties, weights = sample.size)
+summary(cnty.dem.blk00.iv)
+
+cnty.dem.blk00 <- lm(update(base1860.form, I(dem - coef(cnty.dem.blk00.first)["blkprop00"]*(blkprop00)) ~ .), data =south.counties, weights = sample.size)
+summary(cnty.dem.blk00)
+
+cnty.aff.blk00.first <- lm(update(base1860.form, affirm ~ . + blkprop00 +log(totpop00) +highsch90 + unemp + log(medinc00) + wbincratio00), data =south.counties, weights = sample.size)
+summary(cnty.aff.blk00.first)
+
+cnty.aff.blk00.iv <- ivreg(update(base.iv.form, I(affirm - coef(cnty.aff.blk00.first)["blkprop00"]*blkprop00) ~ .), data = south.counties, weights = sample.size)
+summary(cnty.aff.blk00.iv)
+
+cnty.aff.blk00 <- lm(update(base1860.form, I(affirm - coef(cnty.aff.blk00.first)["blkprop00"]*(blkprop00)) ~ .), data =south.counties, weights = sample.size)
+summary(cnty.aff.blk00)
+
+cnty.resent.blk00.first <- lm(update(base1860.form, resent ~ . + blkprop00 +log(totpop00) +highsch90 + unemp + log(medinc00) + wbincratio00), data =south.counties, weights = sample.size.res)
+summary(cnty.resent.blk00.first)
+
+cnty.resent.blk00.iv <- ivreg(update(base.iv.form, I(resent - coef(cnty.resent.blk00.first)["blkprop00"]*blkprop00) ~ .), data = south.counties, weights = sample.size.res)
+summary(cnty.resent.blk00.iv)
+
+cnty.resent.blk00 <- lm(update(base1860.form, I(resent - coef(cnty.resent.blk00.first)["blkprop00"]*(blkprop00)) ~ .), data =south.counties, weights = sample.size.res)
+summary(cnty.resent.blk00)
+
+## bootstrap the SEs
+set.seed(6251983)
+boots <- 1000
+cnty.dem.blk00.boots <- rep(NA, times = boots)
+cnty.aff.blk00.boots <- rep(NA, times = boots)
+cnty.resent.blk00.boots <- rep(NA, times = boots)
+
+
+for (b in 1:boots) {
+  sc.star <- south.counties[sample(1:nrow(south.counties), replace = TRUE),]
+  boot.dem.first <- lm(update(base1860.form, dem ~ . + blkprop00 +log(totpop00) +highsch90 + unemp + log(medinc00) + wbincratio00), data =sc.star, weights = sample.size)
+  boot.dem  <- lm(update(base1860.form, I(dem - coef(boot.dem.first)["blkprop00"]*(blkprop00)) ~ .), data =sc.star, weights = sample.size)
+  cnty.dem.blk00.boots[b] <- coef(boot.dem)["pslave1860"]
+  boot.aff.first <- lm(update(base1860.form, affirm ~ . + blkprop00 +log(totpop00) +highsch90 + unemp + log(medinc00) + wbincratio00), data =sc.star, weights = sample.size)
+  boot.aff  <- lm(update(base1860.form, I(affirm - coef(boot.aff.first)["blkprop00"]*(blkprop00)) ~ .), data =sc.star, weights = sample.size)
+  cnty.aff.blk00.boots[b] <- coef(boot.aff)["pslave1860"]
+  boot.resent.first <- lm(update(base1860.form, resent ~ . + blkprop00 +log(totpop00) +highsch90 + unemp + log(medinc00) + wbincratio00), data =sc.star, weights = sample.size.res)
+  boot.resent <- lm(update(base1860.form, I(resent - coef(boot.resent.first)["blkprop00"]*(blkprop00)) ~ .), data =sc.star, weights = sample.size.res)
+  cnty.resent.blk00.boots[b] <- coef(boot.resent)["pslave1860"]
+}
+
+# Put bootstrapped SEs into a holder (we don't calculate the BSE for
+# the other coefficients since we don't care about them and don't
+# report them in the paper)
+
+dem.bse <- summary(cnty.dem.blk00)$coef[,2]
+dem.bse["pslave1860"] <- sd(cnty.dem.blk00.boots)
+aff.bse <- summary(cnty.aff.blk00)$coef[,2]
+aff.bse["pslave1860"] <- sd(cnty.aff.blk00.boots)
+resent.bse <- summary(cnty.resent.blk00)$coef[,2]
+resent.bse["pslave1860"] <- sd(cnty.resent.blk00.boots)
+
+#save(list=c("cnty.dem.blk00.boots", "cnty.aff.blk00.boots", "cnty.resent.blk00.boots"), file = "blkprop00-seqg-boots.RData")
+```
+
+## Table 3
+
+I was able to recreate table 3 using the GT graphics library in r. I was unable to figure out how he calculated the n values.
+
+```{r table2Out, echo = FALSE}
+#stargazer(cnty.res.blk00.ptbias, cnty.dem.blk00, cnty.aff.blk00.ptbias, cnty.aff.blk00, cnty.resent.blk00.ptbias, cnty.resent.blk00,
+#          keep = c("pslave1860", "blkprop00"), style = "apsr", omit.stat = c("ll", "adj.rsq", "F", "ser"), se = list(NULL, dem.bse, NULL, aff.bse, NULL, resent.bse),
+#          covariate.labels = c("Prop. Slave, Direct Effect", "Prop. Black, 2000"), dep.var.labels = c("Prop Democrat", "Affirm. Action", "Racial Resentment"), column.sep.width = "5pt", float = FALSE, header = FALSE, add.lines = list(rep("", 7), ch.row("State Fixed Effects", rep(TRUE, 6)), ch.row("1860 Covariates", rep(TRUE, 6)), ch.row("Bootstrapped SEs", rep(c(FALSE,TRUE), 3)), c("Model", rep(c("WLS", "Seq. g-est."), 3)), rep("", 7)), multicolumn = TRUE)
+#blkprop.tab[4] <- "\\\\[-1.8ex] &  \\multicolumn{2}{c}{Prop. Democrat} & \\multicolumn{2}{c}{Affirm. Action} & \\multicolumn{2}{c}{Racial Resentment} \\\\ "
+#blkprop.tab <- gsub("\\{\\*\\}", "\\{\\\\dagger\\}", blkprop.tab)
+#blkprop.tab <- gsub("\\{\\*\\*\\}", "\\{\\*\\}", blkprop.tab)
+#blkprop.tab <- gsub("\\{\\*\\*\\*\\}", "\\{\\*\\*\\}", blkprop.tab)
+#blkprop.tab <- blkprop.tab[-(length(blkprop.tab)-1)]
+#cat(paste(blkprop.tab, collapse = "\n"), "\n")
+# Create the dataframe which we will use to create the table
+
+m <- data.frame(matrix(0, ncol = 7, nrow = 10))
+
+m$X1 <- c("Proproportion slave, direct effect", "_", "Proportion black, 2000", "_", "State fixed effects", "1860 covariates", "Bootstrapped SEs", "Model", "N", "R2")
+# Begin filling in the dataframe
+# I'm using the tidy function from the broom library to extract 
+# the estimate and the std error from the linear model and plug them
+# into the dataset
+
+m$X2[1] <- round(tidy(cnty.res.blk00.ptbias)$estimate[2], 2)
+m$X2[2] <- round(tidy(cnty.res.blk00.ptbias)$std.error[2], 2)
+m$X3[1] <- round(tidy(cnty.dem.blk00)$estimate[2], 2)
+m$X3[2] <- round(tidy(cnty.dem.blk00)$std.error[2], 2)
+m$X4[1] <- round(tidy(cnty.aff.blk00.ptbias)$estimate[2], 2)
+m$X4[2] <- round(tidy(cnty.aff.blk00.ptbias)$std.error[2], 2)
+m$X5[1] <- round(tidy(cnty.aff.blk00)$estimate[2], 2)
+m$X5[2] <- round(tidy(cnty.aff.blk00)$std.error[2], 2)
+m$X6[1] <- round(tidy(cnty.resent.blk00.ptbias)$estimate[2], 2)
+m$X6[2] <- round(tidy(cnty.resent.blk00.ptbias)$std.error[2], 2)
+m$X7[1] <- round(tidy(cnty.resent.blk00)$estimate[2], 2)
+m$X7[2] <- round(tidy(cnty.resent.blk00)$std.error[2], 2)
+
+# I am manually putting in the county value, as it does not depend on the data
+# rather where the data was sourced from
+
+m$X2[8] <- "County"
+m$X3[8] <- "Seq. g-est."
+m$X4[8] <- "County"
+m$X5[8] <- "Seq. g-est."
+m$X6[8] <- "WLS"
+m$X7[8] <- "Seq. g-est."
+# I can't figure out how to put check marks in, so I'm using X's
+m$X2[5] <- "X"
+m$X3[5] <- "X"
+m$X4[5] <- "X"
+m$X5[5] <- "X"
+m$X6[5] <- "X"
+m$X7[5] <- "X"
+m$X2[6] <- "X"
+m$X3[6] <- "X"
+m$X4[6] <- "X"
+m$X5[6] <- "X"
+m$X6[6] <- "X"
+m$X7[6] <- "X"
+m$X3[7] <- "X"
+m$X5[7] <- "X"
+m$X7[7] <- "X"
+
+# Calculating the n values.
+# The n values are the number of rows once NULL values are removed
+# For the next columns of the data is uses the columns dem, pslave1860, and state.abb
+# I couldn't quite figure out how this value was calculated
+
+m$X2[9] <- 1152
+m$X3[9] <- 1152
+m$X4[9] <- 1152
+m$X5[9] <- 1152
+m$X6[9] <- 1027
+m$X7[9] <- 1027
+
+# Putting the rsquared values into the dataframe
+m$X2[10] <- round(summary(cnty.res.blk00.ptbias)$r.squared, 2)
+m$X3[10] <- round(summary(cnty.dem.blk00)$r.squared, 2)
+m$X4[10] <- round(summary(cnty.aff.blk00.ptbias)$r.squared, 2)
+m$X5[10] <- round(summary(cnty.aff.blk00)$r.squared, 2)
+m$X6[10] <- round(summary(cnty.resent.blk00.ptbias)$r.squared, 2)
+m$X7[10] <- round(summary(cnty.resent.blk00)$r.squared, 2)
+gt(data = m) %>%  
+  
+   #Add in the title of the table
+  
+  tab_header(
+    title = "Table 3. Effects of Slavery on White Attitudes Net the Effect of the Contemporary Proportions of African Americans"
+ )
+```
+
+
+## Figure 2
+
+I was able to succesfully recreate figure 2. I also cleaned up and commented his code to add more readability.
+
+```{r figure 2, echo = FALSE}
+# Figure 2 Plot
+
+# This uses a series of plot commands to plot out the 4x1 graph
+#cairo_pdf(filename = "../figs/scatters-alt.pdf", family = "Minion Pro", height = 2.5, width = 7, pointsize = 11)
+
+par(mfrow = c(1,4), mar = 0.1 + c(4, 3, 2, 0.5), cex.main = 1)
+plot(south.counties$pslave1860, 
+     south.counties$dem, 
+     pch = 19, 
+     col = "#33333333", 
+     xlab = "Proportion Slave, 1860", 
+     ylab = "", 
+     main = "Proportion Democrat", 
+     yaxt = "n", 
+     cex = south.counties$sample.size/100)
+axis(side = 2, las = 2)
+abline(lm(dem ~ pslave1860, 
+          data = south.counties, 
+          weights = sample.size), 
+       lwd = 2, col = "#AA0000")
+plot(south.counties$pslave1860, 
+     south.counties$affirm, 
+     pch = 19, col = "#33333333", 
+     xlab = "Proportion Slave, 1860", 
+     ylab = "", 
+     main = "Affirmative Action", 
+     yaxt = "n", 
+     cex = south.counties$sample.size/100)
+axis(side = 2, las = 2)
+abline(lm(affirm ~ pslave1860, 
+          data = south.counties, 
+          weights = sample.size), 
+       lwd = 2, col = "#AA0000")
+plot(south.counties$pslave1860, 
+     south.counties$resent, 
+     pch = 19, 
+     col = "#33333333", 
+     xlab = "Proportion Slave, 1860", 
+     ylab="", 
+     main = "Racial Resentment", 
+     yaxt = "n", 
+     cex = south.counties$sample.size.res/75)
+axis(side = 2, las = 2)
+abline(lm(resent ~ pslave1860, 
+          data = south.counties, 
+          weights = sample.size.res), 
+       lwd = 2, 
+       col = "#AA0000")
+with(subset(nes.counties, 
+            state.abb %in% st.list), 
+     
+     plot(pslave1860, 
+          wtherm-btherm,
+          cex = sample.size.bt/40, 
+          pch = 19, 
+          col = "#33333333",
+          xlab = "Proportion Slave, 1860", 
+          ylab = "", 
+          main = "White - Black Therm. Score", 
+          las = 1, 
+          xlim = c(0, 0.9)))
+abline(lm(I(wtherm-btherm) ~ pslave1860, 
+          weights = sample.size.bt, 
+          data = subset(nes.counties, 
+                        state.abb %in% st.list)), 
+       lwd = 2, col = "#AA0000")
+```
+
+
+
+
+
+
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+# Figures 3-5: Instrumental Variables
+
+cnty.iv <- ivreg(update(base.iv.form, dem ~ .), data = south.counties, weights = sample.size)
+
+cnty.aff.iv <- ivreg(update(base.iv.form, affirm  ~ .), data = south.counties, weights = sample.size)
+
+cnty.resent.iv <- ivreg(update(base.iv.form, resent  ~ .), data = south.counties, weights = sample.size.res)
+
+therm.cty.iv <- ivreg(update(base.iv.form, therm.diff ~ .), data = nes.counties, weights = sample.size.td, subset = abs.sample == 1)
+
+cnty.res.first <- lm(base.first.form, data = south.counties)
+
+### Reduced form check in the north
+cnty.dem.rform <- lm(update(rform.form, dem ~ .), data = south.counties, weights = sample.size)
+
+cnty.dem.ns.rform <- lm(update(rform.form, dem ~ .), data = wh.counties, weights = sample.size, subset = !(state.abb %in% st.list) & !(state.abb %in% c("MD", "DE","KY", "MO", "WV")))
+
+cnty.aff.rform <- lm(update(rform.form, affirm ~ .), data = south.counties, weights = sample.size)
+
+cnty.aff.ns.rform <- lm(update(rform.form, affirm ~ .), data = wh.counties, weights = sample.size, subset = !(state.abb %in% st.list) & !(state.abb %in% c("MD", "DE","KY", "MO", "WV")))
+
+cnty.resent.rform <- lm(update(rform.form, resent ~ .), data = south.counties, weights = sample.size.res)
+
+cnty.resent.ns.rform <- lm(update(rform.form, resent ~ .), data = wh.counties, weights = sample.size.res, subset = !(state.abb %in% st.list) & !(state.abb %in% c("MD", "DE","KY","MO", "WV")))
+
+cnty.therm.rform <- lm(update(rform.form, therm.diff ~ .), data = nes.counties, weights = sample.size.td, subset = abs.sample == 1)
+
+cnty.therm.ns.rform <- lm(update(rform.form, therm.diff ~ .), data = nes.counties, weights = sample.size.td, subset = abs.sample == 0 &  !(state.abb %in% c("MD", "DE","KY","MO", "WV")))
+
+
+## NES Results County
+therm.cty.mod <- lm(therm.diff ~ pslave1860, data = nes.counties, weights = sample.size.td, subset = abs.sample == 1)
+
+therm.cty.mod.fe <- lm(therm.diff ~ pslave1860 + state.abb, data = nes.counties, weights = sample.size.td, subset = abs.sample == 1)
+
+therm.cty.1860 <- lm(update(base1860.form, therm.diff ~ .), data = nes.counties, weights = sample.size.td, subset = abs.sample == 1)
+
+therm.cty.iv <- ivreg(update(base.iv.form, therm.diff ~ .), data = nes.counties, weights = sample.size.td, subset = abs.sample == 1)
+
+therm.ind <- lm(update(base1860.form, I(wtherm-btherm) ~ .  + as.factor(year)*state.abb + female + age + I(age^2) + inc.mid + as.factor(educ) + religion), data = ns.whites, weights = weight)
+therm.ind.rse <- robust.se(therm.ind, clvar = "fips")
+
+
+## LA, NC, AR need to be dropped due to lack of state-year variation
+## results the same with separate state and year fixed effects
+therm.iv <- ivreg(update(base.iv.form, I(wtherm-btherm) ~ . + as.factor(year)*state.abb | . + as.factor(year)*state.abb), data = ns.whites, weights = weight, subset = !(state.abb %in% c("LA", "NC","AR", "WV")))
+
+therm.iv.rse <- robust.se(therm.iv, clvar = "fips")
+
+therm.iv.first <- lm(update(base.first.form, . ~ . + as.factor(year)*state.abb), data = ns.whites, weights = weight, subset = !(state.abb %in% c("LA", "NC","AR", "WV")))
+
+btherm.1860 <- lm(update(base1860.form, btherm ~ . + as.factor(year)*state.abb), data = ns.whites, weights = weight)
+
+btherm.1860.rse <- robust.se(btherm.1860, clvar = "fips")
+
+## LA, NC, AR need to be dropped due to lack of state-year variation
+## results the same with separate state and year fixed effects
+btherm.iv <- ivreg(update(base.iv.form, btherm ~ . + as.factor(year)*state.abb | . + as.factor(year)*state.abb), data = ns.whites, weights = weight, subset = !(state.abb %in% c("LA", "NC","AR", "WV")))
+btherm.iv.rse <- robust.se(btherm.iv, clvar = "fips")
+
+wtherm.1860 <- lm(update(base1860.form, wtherm ~ . + as.factor(year)*state.abb), data = ns.whites, weights = weight)
+wtherm.1860.rse <- robust.se(wtherm.1860, clvar = "fips")
+
+## LA, NC, AR need to be dropped due to lack of state-year variation
+## results the same with separate state and year fixed effects
+wtherm.iv <- ivreg(update(base.iv.form, wtherm ~ . + as.factor(year)*state.abb | . + as.factor(year)*state.abb), data = ns.whites, weights = weight, subset = !(state.abb %in% c("LA", "NC","AR")))
+wtherm.iv.rse <- robust.se(wtherm.iv, clvar = "fips")
+
+
+## Neighbor matching
+cnty.res.neighbor <- lm(update(base1860.form, dem ~ .), data = south.counties, weights = sample.size, subset = nmatch.diff.20 == 1)
+# summary(cnty.res.neighbor)
+cnty.aff.neighbor <- lm(update(base1860.form, affirm ~ .), data = south.counties, weights = sample.size, subset = nmatch.diff.20 == 1)
+
+cnty.resent.neighbor <- lm(update(base1860.form, resent ~ .), data = south.counties, weights = sample.size.res, subset = nmatch.diff.20 == 1)
+
+## Matching (Non-slave south versus north)
+## Note that there will be some slight deviation from the results in
+## the paper due to the random nature of k2k matching in this context
+
+mdata <- wh.counties[which(!(wh.counties$state.abb %in% st.list) | wh.counties$pslave < 0.05),]
+mdata <- mdata[which(!(mdata$state.abb %in% c("MD", "DE"))), ]
+
+mvars <- c("dem", "affirm", "resent","south", "fvalpc1860", "fbprop1860", "totpop1860", "longitude", "latitude", "coarea00")
+
+mdata$south <- 1 * (mdata$state.abb %in% st.list)
+
+mout <- cem("south", data = mdata[,mvars], drop = c("dem", "affirm", "resent"), k2k = TRUE)
+
+unique(mdata$state.abb[mout$w > 0 & mdata$south == TRUE])
+unique(mdata$state.abb[mout$w > 0 & mdata$south == FALSE])
+
+match.dem <- lm(update(base1860.form, dem ~ south + . - pslave1860 - state.abb), data = mdata, weights = sample.size, subset = mout$w > 0)
+
+match.aff <- lm(update(base1860.form, affirm ~ south + . - pslave1860 - state.abb), data = mdata, weights = sample.size, subset = mout$w > 0)
+
+match.resent <- lm(update(base1860.form, resent ~ south + . - pslave1860 - state.abb), data = mdata, weights = sample.size.res, subset = mout$w > 0)
+
+```
+
+
+# Figure 3
+
+I was able to recreate Figure 3.
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+# Code for figure 3 from slavery-migration-40s
+## 1940 PUMS
+names(pums) <- tolower(names(pums))
+
+# Subsetting data
+pums$county <- substr(pums$county, 0, nchar(pums$county)-1)
+pums$county[nchar(pums$county) == 1] <- paste("00", pums$county[nchar(pums$county) == 1], sep = "")
+pums$county[nchar(pums$county) == 2] <- paste("0", pums$county[nchar(pums$county) == 2], sep = "")
+pums$fips <- as.numeric(paste(pums$statefip, pums$county, sep = ""))
+
+is.na(pums$incwage) <- which(pums$incwage == 999999)
+is.na(pums$fwage1) <- which(pums$fwage1 == 99999)
+is.na(pums$valueh) <- which(pums$valueh == 999999)
+
+pums.blkmen <- pums[which(pums$race == 2 & pums$sex == 1 & pums$age >18 & pums$incwage > 0),]
+pums.whtmen <- pums[which(pums$race == 1 & pums$sex == 1 & pums$age >18 & pums$incwage > 0),]
+
+pums.blkmen$logwage <- log(pums.blkmen$incwage)
+pums.whtmen$logwage <- log(pums.whtmen$incwage)
+
+pums.blkmen <- cast(melt(pums.blkmen[c("fips", "logwage")], id = c("fips")), fips ~ variable, mean, na.rm = TRUE)
+pums.whtmen <- cast(melt(pums.whtmen[c("fips", "logwage")], id = c("fips")), fips ~ variable, mean, na.rm = TRUE)
+
+pums.raceineq <- merge(x=pums.blkmen, y = pums.whtmen, by = "fips", all = TRUE)
+names(pums.raceineq) <- c("fips", "blklwage1940", "whtlwage1940")
+
+# Using and subsetting state.fips
+data(state.fips)
+state.fips <- unique(state.fips[,c("fips","abb")])
+state.fips$abb <- as.character(state.fips$abb)
+state.fips <- rbind(state.fips, c(2, "AK"))
+state.fips <- rbind(state.fips, c(15, "HI"))
+rownames(state.fips) <- state.fips$abb
+fips.state <- state.fips
+rownames(fips.state) <- fips.state$fips
+data(county.fips)
+st.abbs$State <- tolower(st.abbs$State)
+rownames(st.abbs) <- st.abbs$State
+county.fips$polyname <- gsub(":.*$", "", county.fips$polyname)
+county.fips$county.name <- unlist(lapply(strsplit(as.character(county.fips$polyname), split = ","), function (x) x[2]))
+county.fips$state.name <- unlist(lapply(strsplit(as.character(county.fips$polyname), split = ","), function (x) x[1]))
+county.fips$state.abb <- st.abbs[county.fips$state.name, "Abbreviation"]
+county.fips$sfips <- state.fips[county.fips$state.abb, "fips"]
+county.fips.u <- unique(county.fips)
+
+## this code finds the fips code for the 1935 county based on string
+## matching
+pums$mcny5str <- tolower(pums$mcny5str)
+pums$mcny5str[which(pums$mcny5str == "-")] <- NA
+pums$mcny5str[which(pums$mcny5str == "\\")] <- NA
+pums$mcny5str[which(pums$mcny5str == "")] <- NA
+pums$mcny5str[which(pums$migrate5 %in% c(0,1))] <- NA
+cnames <- unique(pums$mcny5str)
+move.rows <- which(!is.na(pums$mcny5str))
+pums$cname.match <- NA
+pums$fips1935 <- NA
+```
+
+
+
+```{r, eval=FALSE, include=FALSE}
+# Forloop; took an hour to run, so set eval to false
+# Saved and committed the file outputs from this forloop
+for (i in move.rows) {
+  cat("this row: ", i, "\n")
+  this.state <- county.fips.u[which(county.fips.u$sfips == pums$migplac5[i]),]
+  match.rows <- amatch(pums$mcny5str[i], this.state$county.name, method = "jw", p = 0.1,
+                       maxDist = 0.2)
+  if (!is.na(match.rows)) {
+    if (length(match.rows) == 1) {
+      pums$fips1935[i] <- this.state$fips[match.rows]
+      pums$cname.match[i] <- 0
+    } else if (length(match.rows) > 1) {
+      cat("multiple fuzzy matches: ", i, "\n")
+    }
+  }
+}
+pums$fips1935[is.na(pums$fips1935)] <- pums$fips[is.na(pums$fips1935)]
+pums$statefip1935 <- as.numeric(substr(as.character(pums$fips1935), start = 1, stop = ifelse(nchar(as.character(pums$fips1935)) == 4, 1, 2)))
+pums18w <- pums[which(pums$age >= 18 & pums$race == 1),]
+pums18b <- pums[which(pums$age >= 18 & pums$race == 2),]
+st.list <- c(1, 5, 12, 13, 21, 22, 28, 37, 45, 47, 48, 51, 54)
+pums18w.south <- pums18w[which(pums18w$statefip %in% st.list | pums18w$statefip1935 %in% st.list),]
+pums18b.south <- pums18b[which(pums18b$statefip %in% st.list | pums18b$statefip1935 %in% st.list),]
+save(pums18w.south, file = "pums40-migration-white.RData")
+save(pums18b.south, file = "pums40-migration-black.RData")
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Data load and regressions
+load("pums40-migration-white.RData")
+load("pums40-migration-black.RData")
+pums18w.south <- merge(pums18w.south, countydata, by = "fips")
+pums18w.south <- merge(pums18w.south, countydata, by.x = "fips1935", by.y = "fips", suffixes = c("","1935"))
+pums18b.south <- merge(pums18b.south, countydata, by = "fips")
+pums18b.south <- merge(pums18b.south, countydata, by.x = "fips1935", by.y = "fips", suffixes = c("","1935"))
+st.abb.list <- c("AL", "AR", "GA", "FL", "KY", "LA","MS", "MO", "NC", "SC", "TN", "TX", "VA", "WV")
+## http://people.su.se/~ma/clustering.pdf
+robust.se <- function(fm, clvar){
+    # R-codes (www.r-project.org) for computing
+    # clustered-standard errors. Mahmood Arai, Jan 26, 2008.
+    # The arguments of the function are:
+    # fitted model, cluster1 and cluster2
+    
+  x <- eval(fm$call$data, envir = parent.frame())
+  if ("polr" %in% class(fm)) {
+    require(MASS)
+    cluster <- x[rownames(predict(fm, type = "probs")), clvar]
+  } else {
+    cluster <- x[names(predict(fm)), clvar]
+  }
+  M <- length(unique(cluster))
+  N <- length(cluster)
+  K <- dim(vcov(fm))[1]
+  dfc <- (M/(M-1))*((N-1)/(N-K))
+  uj  <- apply(estfun(fm),2, function(x) tapply(x, cluster, sum));
+  vcovCL <- dfc*sandwich(fm, meat=crossprod(uj)/N)
+  return(vcovCL)
+}
+marginal.se <- function(fm, xz, z0, vcv) {
+  x <- strsplit(xz, ":")[[1]][1]
+  z <- strsplit(xz, ":")[[1]][2]
+  coef1 <- coef(fm)[x]
+  coef2 <- coef(fm)[z]
+  coef3 <- coef(fm)[xz]
+  if (missing(vcv)) {
+    vcv <- vcov(fm)
+  }
+  marg.eff <- coef1 + z0*coef3
+  marg.se <- sqrt(vcv[x,x] + z0^2 * vcv[xz,xz] + 2 * z0 * vcv[xz,x])
+  return(list(marg.eff = marg.eff, marg.se = marg.se))
+}
+pums18w.south$migrant <- 1 * (pums18w.south$fips != pums18w.south$fips1935)
+pums18b.south$migrant <- 1 * (pums18b.south$fips != pums18b.south$fips1935)
+
+# These formula calls provide a way to establish a formula for a regression without retyping all the inputs over and over every time it is run. In this case, the left of the ~ is left empty to allow the formula to be used to test various dependent variables. 
+out.base.covs <- formula( ~ migrant*pslave18601935 + log(coarea001935) + rugged1935 + latitude1935 + I(latitude1935^2)  + longitude1935 + I(longitude1935^2) + land.ineq18601935 + sfarmprop18601935 + log(totpop18601935)+ log(fvalpac18601935) + log(acimp18601935) + fbprop18601935 + rail18601935 + water18601935 + state.abb1935)
+
+
+# Then, when update is called in combination with the formula that has been created, the inputs are easily loaded into the formula. 
+out.educ <- lm(update(out.base.covs, I(educ/sd(educ)) ~ .), data = pums18w.south, subset = state.abb1935 %in% st.abb.list)
+
+out.educ.cse <- robust.se(out.educ, "fips1935")
+out.educ.hi <- marginal.se(out.educ, "migrant:pslave18601935", 0.4, out.educ.cse)
+out.educ.lo <- marginal.se(out.educ, "migrant:pslave18601935", 0.1, out.educ.cse)
+# coeftest(out.educ, out.educ.cse)
+
+out.higrade <- lm(update(out.base.covs, higrade ~ .), data = pums18w.south, subset = state.abb1935 %in% st.abb.list)
+out.higrade.cse <- robust.se(out.higrade, "fips1935")
+out.higrade.hi <- marginal.se(out.higrade, "migrant:pslave18601935", 0.4, out.higrade.cse)
+out.higrade.lo <- marginal.se(out.higrade, "migrant:pslave18601935", 0.1, out.higrade.cse)
+# coeftest(out.higrade, out.higrade.cse)
+
+out.age <- lm(update(out.base.covs, I(age/sd(age)) ~ .), data = pums18w.south, subset = state.abb1935 %in% st.abb.list)
+out.age.cse <- robust.se(out.age, "fips1935")
+out.age.hi <- marginal.se(out.age, "migrant:pslave18601935", 0.4, out.age.cse)
+out.age.lo <- marginal.se(out.age, "migrant:pslave18601935", 0.1, out.age.cse)
+# coeftest(out.age, out.age.cse)
+
+out.sex <- lm(update(out.base.covs, I(sex==2) ~ .), data = pums18w.south, subset = state.abb1935 %in% st.abb.list)
+out.sex.cse <- robust.se(out.sex, "fips1935")
+out.sex.hi <- marginal.se(out.sex, "migrant:pslave18601935", 0.4, out.sex.cse)
+out.sex.lo <- marginal.se(out.sex, "migrant:pslave18601935", 0.1, out.sex.cse)
+# coeftest(out.sex, out.sex.cse)
+
+out.nativity <- lm(update(out.base.covs, I(nativity==1) ~ .), data = pums18w.south, subset = state.abb1935 %in% st.abb.list)
+out.nativity.cse <- robust.se(out.nativity, "fips1935")
+out.nativity.hi <- marginal.se(out.nativity, "migrant:pslave18601935", 0.4, out.nativity.cse)
+out.nativity.lo <- marginal.se(out.nativity, "migrant:pslave18601935", 0.1, out.nativity.cse)
+# coeftest(out.nativity, out.nativity.cse)
+
+out.bpl <- lm(update(out.base.covs, I(statefip1935 == bpl) ~ .), data = pums18w.south, subset = state.abb1935 %in% st.abb.list)
+out.bpl.cse <- robust.se(out.bpl, "fips1935")
+out.bpl.hi <- marginal.se(out.bpl, "migrant:pslave18601935", 0.4, out.bpl.cse)
+out.bpl.lo <- marginal.se(out.bpl, "migrant:pslave18601935", 0.1, out.bpl.cse)
+# coeftest(out.bpl, out.bpl.cse)
+
+out.fbpl <- lm(update(out.base.covs, I(statefip1935 == fbpl) ~ .), data = pums18w.south, subset = state.abb1935 %in% st.abb.list)
+out.fbpl.cse <- robust.se(out.fbpl, "fips1935")
+out.fbpl.hi <- marginal.se(out.fbpl, "migrant:pslave18601935", 0.4, out.fbpl.cse)
+out.fbpl.lo <- marginal.se(out.fbpl, "migrant:pslave18601935", 0.1, out.fbpl.cse)
+# coeftest(out.fbpl, out.fbpl.cse)
+
+out.mbpl <- lm(update(out.base.covs, I(statefip1935 == mbpl) ~ .), data = pums18w.south, subset = state.abb1935 %in% st.abb.list)
+out.mbpl.cse <- robust.se(out.mbpl, "fips1935")
+out.mbpl.hi <- marginal.se(out.mbpl, "migrant:pslave18601935", 0.4, out.mbpl.cse)
+out.mbpl.lo <- marginal.se(out.mbpl, "migrant:pslave18601935", 0.1, out.mbpl.cse)
+# coeftest(out.mbpl, out.mbpl.cse)
+
+out.wkswork <- lm(update(out.base.covs, I(wkswork1/sd(wkswork1)) ~ .), data = pums18w.south, subset = state.abb1935 %in% st.abb.list)
+out.wkswork.cse <- robust.se(out.wkswork, "fips1935")
+out.wkswork.hi <- marginal.se(out.wkswork, "migrant:pslave18601935", 0.4, out.wkswork.cse)
+out.wkswork.lo <- marginal.se(out.wkswork, "migrant:pslave18601935", 0.1, out.wkswork.cse)
+# coeftest(out.wkswork, out.wkswork.cse)
+
+out.incwage <- lm(update(out.base.covs, I(fwage1/sd(fwage1, na.rm = TRUE)) ~ .), data = pums18w.south, subset = state.abb1935 %in% st.abb.list)
+out.incwage.cse <- robust.se(out.incwage, "fips1935")
+out.incwage.hi <- marginal.se(out.incwage, "migrant:pslave18601935", 0.4, out.incwage.cse)
+out.incwage.lo <- marginal.se(out.incwage, "migrant:pslave18601935", 0.1, out.incwage.cse)
+# coeftest(out.incwage, out.incwage.cse)
+
+out.rent <- lm(update(out.base.covs, I(rent/sd(rent, na.rm = TRUE)) ~ .), data = pums18w.south, subset = state.abb1935 %in% st.abb.list & rent < 9999)
+out.rent.cse <- robust.se(out.rent, "fips")
+out.rent.hi <- marginal.se(out.rent, "migrant:pslave18601935", 0.4, out.rent.cse)
+out.rent.lo <- marginal.se(out.rent, "migrant:pslave18601935", 0.1, out.rent.cse)
+# coeftest(out.rent, out.rent.cse)
+
+hi.eff <- c(out.educ.hi$marg.eff, out.age.hi$marg.eff, out.sex.hi$marg.eff,
+            out.nativity.hi$marg.eff, out.bpl.hi$marg.eff, out.wkswork.hi$marg.eff, out.incwage.hi$marg.eff, out.rent.hi$marg.eff)
+
+hi.ses <- c(out.educ.hi$marg.se, out.age.hi$marg.se, out.sex.hi$marg.se,
+            out.nativity.hi$marg.se, out.bpl.hi$marg.se, out.wkswork.hi$marg.se, out.incwage.hi$marg.se, out.rent.hi$marg.se)
+
+lo.eff <- c(out.educ.lo$marg.eff, out.age.lo$marg.eff, out.sex.lo$marg.eff,
+            out.nativity.lo$marg.eff, out.bpl.lo$marg.eff, out.wkswork.lo$marg.eff, out.incwage.lo$marg.eff, out.rent.lo$marg.eff)
+
+lo.ses <- c(out.educ.lo$marg.se, out.age.lo$marg.se, out.sex.lo$marg.se,
+            out.nativity.lo$marg.se, out.bpl.lo$marg.se, out.wkswork.lo$marg.se, out.incwage.lo$marg.se, out.rent.lo$marg.se)
+
+in.base.covs <- formula( ~ migrant*pslave1860 + log(coarea00) + latitude + I(latitude^2) + longitude + I(longitude^2)+ rugged  + land.ineq1860 + sfarmprop1860 + log(totpop1860) + log(fvalpac1860) + log(acimp1860) + fbprop1860  + rail1860 + water1860 + state.abb)
+
+in.educ <- lm(update(in.base.covs, I(educ/sd(educ)) ~ .), data = pums18w.south, subset = state.abb %in% st.abb.list)
+
+in.educ.cse <- robust.se(in.educ, "fips")
+in.educ.hi <- marginal.se(in.educ, "migrant:pslave1860", 0.4, in.educ.cse)
+in.educ.lo <- marginal.se(in.educ, "migrant:pslave1860", 0.1, in.educ.cse)
+# coeftest(in.educ, in.educ.cse)
+
+in.higrade <- lm(update(in.base.covs, higrade ~ .), data = pums18w.south, subset = state.abb %in% st.abb.list)
+in.higrade.cse <- robust.se(in.higrade, "fips")
+in.higrade.hi <- marginal.se(in.higrade, "migrant:pslave1860", 0.4, in.higrade.cse)
+in.higrade.lo <- marginal.se(in.higrade, "migrant:pslave1860", 0.1, in.higrade.cse)
+# coeftest(in.higrade, in.higrade.cse)
+
+in.age <- lm(update(in.base.covs, I(age/sd(age)) ~ .), data = pums18w.south, subset = state.abb %in% st.abb.list)
+in.age.cse <- robust.se(in.age, "fips")
+in.age.hi <- marginal.se(in.age, "migrant:pslave1860", 0.4, in.age.cse)
+in.age.lo <- marginal.se(in.age, "migrant:pslave1860", 0.1, in.age.cse)
+# coeftest(in.age, in.age.cse)
+
+in.sex <- lm(update(in.base.covs, I(sex==2) ~ .), data = pums18w.south, subset = state.abb %in% st.abb.list)
+in.sex.cse <- robust.se(in.sex, "fips")
+in.sex.hi <- marginal.se(in.sex, "migrant:pslave1860", 0.4, in.sex.cse)
+in.sex.lo <- marginal.se(in.sex, "migrant:pslave1860", 0.1, in.sex.cse)
+# coeftest(in.sex, in.sex.cse)
+
+in.nativity <- lm(update(in.base.covs, I(nativity==1) ~ .), data = pums18w.south, subset = state.abb %in% st.abb.list)
+in.nativity.cse <- robust.se(in.nativity, "fips")
+in.nativity.hi <- marginal.se(in.nativity, "migrant:pslave1860", 0.4, in.nativity.cse)
+in.nativity.lo <- marginal.se(in.nativity, "migrant:pslave1860", 0.1, in.nativity.cse)
+# coeftest(in.nativity, in.nativity.cse)
+
+in.bpl <- lm(update(in.base.covs, I(statefip == bpl) ~ .), data = pums18w.south, subset = state.abb %in% st.abb.list)
+in.bpl.cse <- robust.se(in.bpl, "fips")
+in.bpl.hi <- marginal.se(in.bpl, "migrant:pslave1860", 0.4, in.bpl.cse)
+in.bpl.lo <- marginal.se(in.bpl, "migrant:pslave1860", 0.1, in.bpl.cse)
+# coeftest(in.bpl, in.bpl.cse)
+
+in.fbpl <- lm(update(in.base.covs, I(statefip == fbpl) ~ .), data = pums18w.south, subset = state.abb %in% st.abb.list)
+in.fbpl.cse <- robust.se(in.fbpl, "fips")
+in.fbpl.hi <- marginal.se(in.fbpl, "migrant:pslave1860", 0.4, in.fbpl.cse)
+in.fbpl.lo <- marginal.se(in.fbpl, "migrant:pslave1860", 0.1, in.fbpl.cse)
+# coeftest(in.fbpl, in.fbpl.cse)
+
+in.mbpl <- lm(update(in.base.covs, I(statefip == mbpl) ~ .), data = pums18w.south, subset = state.abb %in% st.abb.list)
+in.mbpl.cse <- robust.se(in.mbpl, "fips")
+in.mbpl.hi <- marginal.se(in.mbpl, "migrant:pslave1860", 0.4, in.mbpl.cse)
+in.mbpl.lo <- marginal.se(in.mbpl, "migrant:pslave1860", 0.1, in.mbpl.cse)
+# coeftest(in.mbpl, in.mbpl.cse)
+
+in.wkswork <- lm(update(in.base.covs, I(wkswork1/sd(wkswork1)) ~ .), data = pums18w.south, subset = state.abb %in% st.abb.list)
+in.wkswork.cse <- robust.se(in.wkswork, "fips")
+in.wkswork.hi <- marginal.se(in.wkswork, "migrant:pslave1860", 0.4, in.wkswork.cse)
+in.wkswork.lo <- marginal.se(in.wkswork, "migrant:pslave1860", 0.1, in.wkswork.cse)
+# coeftest(in.wkswork, in.wkswork.cse)
+
+in.incwage <- lm(update(in.base.covs, I(fwage1/sd(fwage1, na.rm = TRUE)) ~ .), data = pums18w.south, subset = state.abb %in% st.abb.list)
+in.incwage.cse <- robust.se(in.incwage, "fips")
+in.incwage.hi <- marginal.se(in.incwage, "migrant:pslave1860", 0.4, in.incwage.cse)
+in.incwage.lo <- marginal.se(in.incwage, "migrant:pslave1860", 0.1, in.incwage.cse)
+# coeftest(in.incwage, in.incwage.cse)
+
+in.rent <- lm(update(in.base.covs, I(rent/sd(rent, na.rm = TRUE)) ~ .), data = pums18w.south, subset = state.abb %in% st.abb.list & rent < 9999)
+in.rent.cse <- robust.se(in.rent, "fips")
+in.rent.hi <- marginal.se(in.rent, "migrant:pslave1860", 0.4, in.rent.cse)
+in.rent.lo <- marginal.se(in.rent, "migrant:pslave1860", 0.1, in.rent.cse)
+# coeftest(in.rent, in.rent.cse)
+
+in.hi.eff <- c(in.educ.hi$marg.eff, in.age.hi$marg.eff, in.sex.hi$marg.eff,
+               in.nativity.hi$marg.eff, in.bpl.hi$marg.eff, in.wkswork.hi$marg.eff,
+               in.incwage.hi$marg.eff, in.rent.hi$marg.eff)
+
+in.hi.ses <- c(in.educ.hi$marg.se, in.age.hi$marg.se, in.sex.hi$marg.se,
+               in.nativity.hi$marg.se, in.bpl.hi$marg.se, in.wkswork.hi$marg.se,
+               in.incwage.hi$marg.se, in.rent.hi$marg.se)
+
+in.lo.eff <- c(in.educ.lo$marg.eff, in.age.lo$marg.eff, in.sex.lo$marg.eff,
+               in.nativity.lo$marg.eff, in.bpl.lo$marg.eff, in.wkswork.lo$marg.eff,
+               in.incwage.lo$marg.eff, in.rent.lo$marg.eff)
+
+in.lo.ses <- c(in.educ.lo$marg.se, in.age.lo$marg.se, in.sex.lo$marg.se,
+               in.nativity.lo$marg.se, in.bpl.lo$marg.se, in.wkswork.lo$marg.se,
+               in.incwage.lo$marg.se, in.rent.lo$marg.se)
+```
+
+
+
+```{r, echo=FALSE, fig.cap = "Figure 3. Characteristics of white out-migrants and in-migrants compared to white nonmigrants for high-slave and low-slave counties, where migration took place between 1935 and 1939. In the left panel, each point is the estimated difference between nonmigrants and out-migrants from high-slave areas (dots) and between nonmigrants and out-migrants from low-slave areas (triangles), conditional on 1860 covariates of the individual’s 1935 county of residence. The right panel is the same for in-migration, conditional on 1860 covariates of the individual’s 1939 county of residence."}
+
+# Figure 3 Output
+
+##cairo_pdf("figs/migration1940.pdf", family = "Minion Pro", height = 4, width = 7, pointsize = 9)
+cov.labs <- c("Education", "Age", "Female", "Nativity", "Living in birthstate", "Weeks Worked", "Wages", "Monthly Rent")
+layout(mat = matrix(c(1,1,2,3), nrow = 2, byrow=TRUE), heights = c(0.1,0.9))
+par(mar = c(0,0,0,0))
+plot(1, type = "n", axes=FALSE, xlab="", ylab="")
+legend(x="top", bty = "n", col = c("black", "red"), pch = c(19,17), legend = c("High Prop Slave", "Low Prop Slave"), lty = 1, horiz = TRUE)
+xwindow <- range(c(in.hi.eff + 2*in.hi.ses, in.hi.eff - 2*in.hi.ses, in.lo.eff + 2*in.lo.ses, in.lo.eff - 2*in.lo.ses))
+par(mar = c(4.5,8.5,1,1))
+plot(x = hi.eff, y = 1:length(hi.eff), xlim = xwindow, ylim = c(0,length(hi.eff) + 1), pch = 19, yaxt = "n", bty = "n", ylab = "", main = "Out-migration", xlab = "Migrants vs. Non-migrants")
+axis(side = 2, at = 1:length(hi.eff) - .125, labels = cov.labs, las = 1)
+points(x = lo.eff, y = (1:length(lo.eff)) - 0.25, pch = 17, col = "red")
+segments(x0 = hi.eff - 1.96 * hi.ses, x1 = hi.eff + 1.96 * hi.ses, y0 = 1:length(hi.eff))
+segments(x0 = lo.eff - 1.96 * lo.ses, x1 = lo.eff + 1.96 * lo.ses, y0 = 1:length(lo.eff) - 0.25, col = "red")
+abline(v=0, col = "grey70", lty = 2)
+plot(x = in.hi.eff, y = 1:length(in.hi.eff), xlim = xwindow, ylim = c(0,length(in.hi.eff)+1), pch = 19, yaxt = "n", bty = "n", ylab = "", main = "In-migration", xlab = "Migrants vs. Non-migrants")
+axis(side = 2, at = 1:length(in.hi.eff) - .125, labels = cov.labs, las = 1)
+points(x = in.lo.eff, y = (1:length(in.lo.eff)) - 0.25, pch = 17, col = "red")
+segments(x0 = in.hi.eff - 1.96 * in.hi.ses, x1 = in.hi.eff + 1.96 * in.hi.ses, y0 = 1:length(in.hi.eff))
+segments(x0 = in.lo.eff - 1.96 * in.lo.ses, x1 = in.lo.eff + 1.96 * in.lo.ses, y0 = 1:length(in.lo.eff) - 0.25, col = "red")
+abline(v=0, col = "grey70", lty = 2)
+##dev.off()
+```
+
+
+
+
+
+# Figure 4
+
+I was able to recreate Figure 4 for the most part.
+
+```{r, echo=FALSE, cache=TRUE, include=FALSE}
+
+## Most county boundaries are set by 1925 or so.
+## variables without the 1860 suffix are based on the 1860 county
+## boundaries
+
+
+pres.form <- formula(. ~ sprop + log(coarea00) + latitude + I(latitude^2) + longitude + I(longitude^2)+ rugged  + land.ineq + sfarmprop + log(totpop) + log(fvalpc) + log(acimp) + fbprop  + rail + water + state.abb)
+
+pres.iv.form <- Formula(. ~ sprop + log(coarea00) + rugged + latitude + I(latitude^2) + longitude + I(longitude^2)  + water  + state.abb | cottonsuit + log(coarea00) + rugged  + latitude + I(latitude^2) + longitude + I(longitude^2) + water  + state.abb)
+
+year.list <- seq(1840, 1964, by = 4)
+outvars <- paste("pdem", year.list, sep = "")
+pdemcoefs <- matrix(NA, nrow = length(outvars), ncol = 3)
+pdemcoefs.nox <- matrix(NA, nrow = length(outvars), ncol = 3)
+pdemcoefs.iv <- matrix(NA, nrow = length(outvars), ncol = 3)
+pdemcoefs.rfns <- matrix(NA, nrow = length(outvars), ncol = 3)
+pdemcoefs.rf <- matrix(NA, nrow = length(outvars), ncol = 3)
+
+
+for (y in 1:length(outvars)) {
+  if (!(outvars[y] %in% c("pdem1864", "pdem1868"))) {
+    ## OLS
+    ff <- as.formula(paste(outvars[y], " ~ ."))
+    if (year.list[y] < 1924) {
+      thismod <- lm(update(pres.form, ff), data = countydata, subset = state.abb %in% st.list)
+    } else {
+      thismod <- lm(update(base1860.form, ff), data = countydata, subset = state.abb %in% st.list)
+    }
+    pdemcoefs[y,1] <- 0.25*coef(thismod)[2]
+    pdemcoefs[y,2:3] <- 0.25*confint(thismod)[2,]
+    ## Only state FEs
+    if (year.list[y] < 1924) {
+      ff <- as.formula(paste(outvars[y], " ~ sprop + state.abb"))
+    } else {
+      ff <- as.formula(paste(outvars[y], " ~ pslave1860 + state.abb"))
+    }
+    thismod <- lm(ff, data = countydata, subset = state.abb %in% st.list)
+    pdemcoefs.nox[y,1] <- 0.25*coef(thismod)[2]
+    pdemcoefs.nox[y,2:3] <- 0.25*confint(thismod)[2,]
+    ## IV
+    if (year.list[y] < 1924) {
+      ff <- update(pres.iv.form, as.formula(paste(outvars[y], "~ . | .")))
+    } else {
+      ff <- update(base.iv.form, as.formula(paste(outvars[y], "~ . | .")))
+    }
+    thismod <- ivreg(ff, data = countydata, subset = state.abb %in% st.list)
+    pdemcoefs.iv[y,1] <- coef(thismod)[2]
+    pdemcoefs.iv[y,2:3] <- confint(thismod)[2,]
+    ## Reduced form in the non-south
+    ff <- as.formula(paste(outvars[y], "~ cottonsuit + log(coarea00) + rugged+ latitude + I(latitude^2) + longitude + I(longitude^2)   + state.abb"))
+    thismod <- lm(ff, data = countydata, subset = !(state.abb %in% st.list) & !(state.abb %in% c("MD", "DE", "MO")))
+    pdemcoefs.rfns[y,1] <- coef(thismod)[2]
+    pdemcoefs.rfns[y,2:3] <- confint(thismod)[2,]
+    ## Reduced form in the south
+    thismod <- lm(ff, data = countydata, subset = state.abb %in% st.list)
+    pdemcoefs.rf[y,1] <- coef(thismod)[2]
+    pdemcoefs.rf[y,2:3] <- confint(thismod)[2,]
+  }
+  
+  
+  ## if (outvars[y] %in% c("pdem1860","pdem1864")) {
+  ##   pdemcoefs[y,1] <- NA
+  ##   pdemcoefs[y,2:3] <- NA
+  ##   pdemcoefs.iv[y,1] <- NA
+  ##   pdemcoefs.iv[y,2:3] <- NA
+  ## }
+  ## if (outvars[y] == "pdem1856") {
+  ##   pdemcoefs[y,1] <- NA
+  ##   pdemcoefs[y,2:3] <- NA
+  ## }
+  
+}
+
+
+douglas.ols <- lm(update(pres.form, pdem1860 ~ .), data = countydata, subset = state.abb %in% st.list)
+douglas.iv <- ivreg(update(pres.iv.form, pdem1860 ~ .), data = countydata, subset = state.abb %in% st.list)
+
+wallace.ols <- lm(update(base1860.form, wallace68.alt ~ .), data = countydata, subset = state.abb %in% st.list)
+wallace.iv <- ivreg(update(base.iv.form, wallace68.alt ~ .), data = countydata, subset = state.abb %in% st.list)
+
+thurmond.ols <- lm(update(base1860.form, thurmond48 ~ .), data = countydata, subset = state.abb %in% st.list)
+thurmond.iv <- ivreg(update(base.iv.form, thurmond48 ~ .), data = countydata, subset = state.abb %in% st.list)
+
+obama.ols <- lm(update(base1860.form,  wht.obama.vote ~ .), data = countydata, subset = abs.sample == 1)
+obama.iv <- ivreg(update(base.iv.form, wht.obama.vote  ~ .), data = countydata, subset = abs.sample == 1)
+```
+
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.cap= "Figure 4. Effect of proportion slave on vote for Democratic presidential candidate in the South over time. Each point is the effect of a 25 percentage point increase in proportion slave from separate IV models of county-level Democratic share of the presidential vote on proportion slave. Results for Obama in 2008 are from white respondents in the CCES."}
+
+##cairo_pdf(file= "../figs/prescountyvote-iv.pdf", family = "Minion Pro", height = 4.5, width = 6.5, pointsize = 9)
+plot(x = year.list, y = 0.25*pdemcoefs.iv[,1], ylim = range(c(.25*pdemcoefs.iv,25*confint(obama.iv)["pslave1860",]), na.rm = TRUE), xlim=c(min(year.list),2016), xlab = "Year",
+     ylab = "Effect of Slavery on % Democrat", pch = 19, main = "Presidential Elections", bty = "n", yaxt = "n")
+abline(v = 1904, lty = 2, col = "grey70")
+text(x = 1904, y = 25*confint(obama.iv)["pslave1860",1]+0.5, "All states but KY have\nenacted poll taxes", pos = 4)
+abline(v = 1965, lty = 2, col = "grey70")
+text(x = 1965, y =  25*confint(obama.iv)["pslave1860",1]+0.5, "Voting Rights Act", pos = 4)
+axis(side = 2, las = 2, cex = 0.8)
+abline(h=0, col = "grey")
+segments(x0 = year.list, y0 = .25*pdemcoefs.iv[,2], y1 = .25*pdemcoefs.iv[,3])
+rect(xleft = 1860, xright = 1877, ybottom = -100, ytop=100, col = rgb(.5,.5,.5, alpha = 0.5), border = NA)
+text(x = 1860, y = max(.25*pdemcoefs.iv, na.rm=TRUE)-1, "Civil War\nBegins", pos = 2)
+text(x = 1877, y = max(.25*pdemcoefs.iv, na.rm=TRUE)-1, "Reconstruction\nEnds", pos = 4)
+points(x = 1968, y = .25*coef(wallace.iv)["pslave1860"], pch = 17, col = "indianred")
+segments(x0 = 1968, y0 = 0.25*confint(wallace.iv)["pslave1860",1], y1 = 0.25*confint(wallace.iv)["pslave1860",2], col = "indianred")
+text(x = 1968, y = 0.25*coef(wallace.iv)["pslave1860"], "Wallace\n1968", pos = 4, col = "indianred")
+points(x = 1949, y = .25*coef(thurmond.iv)["pslave1860"], pch = 17, col = "indianred")
+segments(x0 = 1949, y0 = 0.25*confint(thurmond.iv)["pslave1860",1], y1 = 0.25*confint(thurmond.iv)["pslave1860",2], col = "indianred")
+text(x = 1949, y = 0.35*confint(thurmond.iv)["pslave1860",2], "Thurmond\n1948", pos = 3, col = "indianred")
+segments(x0=1949, y0=0.35*confint(thurmond.iv)["pslave1860",2],y1=0.26*confint(thurmond.iv)["pslave1860",2], lty = 3, col = "grey70")
+points(x = 2008, y = 25*coef(obama.iv)["pslave1860"], pch = 19)
+segments(x0 = 2008, y0 = 25*confint(obama.iv)["pslave1860",1], y1 = 25*confint(obama.iv)["pslave1860",2])
+text(x = 2008, y = 25*coef(obama.iv)["pslave1860"], "Obama\n2008", pos = 4)
+##dev.off()
+```
+
+
+# Figure 5
+
+I was able to recreate Figure 5 for the most part.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.cap= "Figure 5. Within-state relationship between proportion slave in 1850 in a county and percentage voting for Unionist candidates in 1851 in that county. Both Howell Cobb and Henry Foote were running against strong States’ Rights supporters in the aftermath of the Compromise of 1850. Higher values on each y-axis indicate more moderate voting with regard to slavery and secession."}
+
+## Antebellum results
+
+#The following regressions and plot commands create figure 5. I could not figure out how only have the two plots side by side rather than each individual plot as well. 
+
+cnty.dem.houses <- lm(update(base1860.form, dem ~ . + slavesperhouse), data = south.counties, weights = sample.size)
+
+cnty.aff.houses <- lm(update(base1860.form, affirm ~ . + slavesperhouse), data = south.counties, weights = sample.size)
+
+cnty.resent.houses <- lm(update(base1860.form, resent ~ . + slavesperhouse), data = south.counties, weights = sample.size.res)
+
+cnty.dem.mortrate <- lm(update(base1860.form, dem ~ . + I(log(s.mortrate/w.mortrate))), data = south.counties, weights = sample.size, subset = s.mortrate > 0)
+
+cnty.aff.mortrate <- lm(update(base1860.form, affirm ~ . + I(log(s.mortrate/w.mortrate))), data = south.counties, weights = sample.size, subset = s.mortrate > 0)
+
+cnty.resent.mortrate <- lm(update(base1860.form, resent ~ . + I(log(s.mortrate/w.mortrate))), data = south.counties, weights = sample.size.res, subset = s.mortrate > 0)
+
+
+coef(cnty.dem.houses)["pslave1860"]*sd(south.counties$pslave1860, na.rm = TRUE)
+coef(cnty.dem.houses)["slavesperhouse"]*sd(south.counties$slavesperhouse, na.rm = TRUE)
+
+## 1851 Gubernatorial elections in MS and GA
+## Data comes from ICPSR 00001
+
+ga.votes$cfips <- strtrim(ga.votes$V3, nchar(ga.votes$V3)-1)
+ga.votes$fips <- as.numeric(paste(13, str_pad(ga.votes$cfips, 3, side = "left", pad = "0"), sep = ""))
+is.na(ga.votes) <- ga.votes == 9999999
+ga.votes$howell1851 <- ga.votes$V345/ga.votes$V348
+# head(ga.votes$howell1851)
+
+ga.votes <- merge(ga.votes, countydata, by = "fips", all.x = TRUE, all.y = FALSE)
+lattice::xyplot(howell1851 ~ sprop1850, data = ga.votes, subset = state.abb %in% st.list , pch = 16, lwd = 4, col.line = "indianred", col = dodgerblue.30, xlab = "Proportion Slave, 1850", ylab = "Howell Cobb Vote-share, 1851", panel =
+                    function(x,y,...) {  panel.xyplot(x, y, ...)
+                                         panel.smoother(x,y,method = "loess", col = "indianred", lwd = 4)})
+
+ms.votes$cfips <- strtrim(ms.votes$V3, nchar(ms.votes$V3)-1)
+ms.votes$fips <- as.numeric(paste(28, str_pad(ms.votes$cfips, 3, side = "left", pad = "0"), sep = ""))
+is.na(ms.votes) <- ms.votes == 9999999
+ms.votes$foote1851 <- ms.votes$V187/ms.votes$V190
+# head(ms.votes$foote1851)
+ms.votes <- merge(ms.votes, countydata, by = "fips", all.x = TRUE, all.y = FALSE)
+lattice::xyplot(foote1851 ~ sprop1850, data = ms.votes, subset = state.abb %in% st.list , pch = 16, lwd = 4, col.line = "indianred", col = dodgerblue.30, xlab = "Proportion Slave, 1850", ylab = "Henry Foote Vote-share, 1851", panel =
+                    function(x,y,...) {  panel.xyplot(x, y, ...)
+                                         panel.smoother(x,y,method = "loess", col = "indianred", lwd = 4)})
+
+#cairo_pdf(filename = "figs/ms-ga-1851-vote.pdf", family = "Minion Pro", height = 4.5, width = 9, pointsize = 11)
+p1 <- lattice::xyplot(howell1851 ~ sprop1850, data = ga.votes, subset = state.abb %in% st.list , pch = 16, lwd = 4, ylim = c(0,1), col.line = "indianred", main = "Georgia Gubernatorial Election, 1851", col = dodgerblue.30, xlab = "Proportion Slave, 1850", ylab = "Howell Cobb Vote-share, 1851", panel =
+                    function(x,y,...) {  panel.xyplot(x, y, ...)
+                                         panel.smoother(x,y,method = "loess", col = "indianred", lwd = 4)})
+p2 <- lattice::xyplot(foote1851 ~ sprop1850, data = ms.votes, subset = state.abb %in% st.list , pch = 16, lwd = 4, ylim = c(0,1), col.line = "indianred", main = "Mississippi Gubernatorial Election, 1851", col = dodgerblue.30, xlab = "Proportion Slave, 1850", ylab = "Henry Foote Vote-share, 1851", panel =
+                    function(x,y,...) {  panel.xyplot(x, y, ...)
+                                         panel.smoother(x,y,method = "loess", col = "indianred", lwd = 4)})
+plot(p1, position = c(0.0, 0, 0.49, 1), more = TRUE)
+plot(p2, position = c(0.5, 0, 1, 1))
+
+#dev.off()
+
+# Doing this PSET, I learned that dev.off marks the end of some graphic,
+# table, etc. which proved to be very helpful when sorting through replication data.
+
+# Note: data for tables 1 and 6 were not readily accessible in the
+# dataverse files which is why they are not replicated. 
+```
+
+
+
+
+
+
