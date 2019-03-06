@@ -1,5 +1,5 @@
 ---
-title: "Rep3"
+title: "Replication 3: The Political Legacy of American Slavery"
 author: "Keeley MacAfee"
 output: html_document
 date: "3/4/2019"
